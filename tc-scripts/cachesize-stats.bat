@@ -14,6 +14,6 @@ if not defined JAVA_HOME (
 set JAVA_HOME="%JAVA_HOME:"=%"
 set JAVA_OPTS="%JAVA_OPTS% -Xms128m -Xmx512m -XX:MaxDirectMemorySize=10G -Dcom.tc.productkey.path=terracotta-license.key -Dehcache.config.path=classpath:ehcache.xml"
 
-set CLASSPATH=%TC_INSTALL_DIR%\custom\lib\EhCacheUtils-1.0.0.jar;%TC_INSTALL_DIR%\ehcache\lib\*
+set CLASSPATH=%TC_INSTALL_DIR%\custom\lib\ehcache-sizeutils-1.0.0.jar;%TC_INSTALL_DIR%\ehcache\lib\*
 %JAVA_HOME%\bin\java %JAVA_OPTS% -cp %CLASSPATH% org.terracotta.utils.SizeIteratorLauncher %*
 endlocal
