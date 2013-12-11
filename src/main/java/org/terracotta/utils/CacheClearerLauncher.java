@@ -1,5 +1,6 @@
 package org.terracotta.utils;
 
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -16,52 +17,79 @@ public class CacheClearerLauncher {
 
 	private final CacheManager cacheManager;
 	private final String[] myCacheNames;
-
-	private static final int CACHE_POOLSIZEMAX = 10;
-
 	private final ExecutorService cacheOpsService;
 
-	public CacheClearerLauncher(final String cacheName) {
+	private static final String CACHENAME_ARGS_SEPARATOR = ",";
+	private static final int CACHE_POOLSIZEMAX = 10;
+
+	public CacheClearerLauncher(final String strCacheNames) {
 		this.cacheManager = CacheUtils.getCacheManager();
-		if(cacheName == null || !cacheManager.cacheExists(cacheName)){
-			this.myCacheNames = new String[]{}; //will do nothing
+
+		if(null != strCacheNames){
+			myCacheNames = strCacheNames.trim().split(CACHENAME_ARGS_SEPARATOR);
 		} else {
-			this.myCacheNames = new String[]{cacheName};
+			myCacheNames = null;
 		}
-		
-		if(myCacheNames.length > 0){
+
+		if(null != myCacheNames && myCacheNames.length > 0){
 			this.cacheOpsService = Executors.newFixedThreadPool((myCacheNames.length>CACHE_POOLSIZEMAX)?CACHE_POOLSIZEMAX:myCacheNames.length, new NamedThreadFactory("Cache Ops Pool"));
 		} else {
 			this.cacheOpsService = null;
 		}
 	}
 
+	@Override
+	protected void finalize() throws Throwable {
+		super.finalize();
+
+		if(null != cacheOpsService)
+			shutdownAndAwaitTermination(cacheOpsService);
+	}
+
 	public void clearObjectInCache(){
-		for(String cacheName : myCacheNames){
-			if(cacheManager.cacheExists(cacheName)){
-				Cache myCache = cacheManager.getCache(cacheName);
-				if(null != myCache){
-					cacheOpsService.submit(new CacheClearOp(myCache));
+		if(null != myCacheNames){
+			for(String cacheName : myCacheNames){
+				if(cacheManager.cacheExists(cacheName)){
+					Cache myCache = cacheManager.getCache(cacheName);
+					if(null != myCache){
+						cacheOpsService.submit(new CacheClearOp(myCache));
+					}
 				}
 			}
+		} else {
+			System.out.println("No cache specified...do nothing");
 		}
 	}
 
 	public void clearObjectInCacheSerial() throws InterruptedException{
-		for(String cacheName : myCacheNames){
-			if(cacheManager.cacheExists(cacheName)){
-				Cache myCache = cacheManager.getCache(cacheName);
-				if(null != myCache){
-					System.out.print(String.format("Before Clear - Cache Name: %s - Cache Size: %d", myCache.getName(), myCache.getSize()));
+		if(null != myCacheNames){
+			for(String cacheName : myCacheNames){
+				if(cacheManager.cacheExists(cacheName)){
+					Cache myCache = cacheManager.getCache(cacheName);
+					if(null != myCache){
+						System.out.println(String.format("Before Clear - Cache Name: %s - Cache Size: %d", myCache.getName(), myCache.getSize()));
 
-					myCache.removeAll();
+						myCache.removeAll();
 
-					System.out.print("Waiting a bit to let the clustered cache clear its entries...");
-					Thread.sleep(5000);
+						System.out.println("Waiting a bit to let the clustered cache clear its entries...");
+						Thread.sleep(5000);
 
-					System.out.print(String.format("After Clear - Cache Name: %s - Cache Size: %d", myCache.getName(), myCache.getSize()));
+						System.out.println(String.format("After Clear - Cache Name: %s - Cache Size: %d", myCache.getName(), myCache.getSize()));
+
+						List keys = myCache.getKeysWithExpiryCheck();
+						if(null != keys){
+							System.out.println(String.format("After Clear - Cache Keys: %d", keys.size()));
+							for(Object key : keys){
+								System.out.println(String.format("Key: %s", key.toString()));
+							}
+						} else {
+							System.out.println(String.format("After Clear - Cache Keys: %d", 0));
+						}
+					}
 				}
 			}
+		} else {
+			System.out.println("No cache specified...do nothing");
 		}
 	}
 
