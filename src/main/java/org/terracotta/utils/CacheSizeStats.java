@@ -1,6 +1,7 @@
 package org.terracotta.utils;
 
 import java.text.NumberFormat;
+import java.util.HashSet;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +15,7 @@ public class CacheSizeStats implements Cloneable {
 	private static final Logger log = LoggerFactory.getLogger(CacheSizeStats.class);
 
 	private final String cacheName;
+	private final HashSet<String> cacheItemTypes = new HashSet<String>();
 	private long objCount;
 	private long totalSize;
 	private long minSize, maxSize;
@@ -66,6 +68,9 @@ public class CacheSizeStats implements Cloneable {
 
 			if (stat.maxSize > this.maxSize)
 				this.maxSize = stat.maxSize;
+			
+			if(null != stat.cacheItemTypes)
+				cacheItemTypes.addAll(stat.cacheItemTypes);
 		}
 		return this;
 	}
@@ -76,7 +81,7 @@ public class CacheSizeStats implements Cloneable {
 	 * @param txLength
 	 *            transaction length
 	 */
-	public void add(long size) {
+	public void add(long size, String objectType) {
 		objCount += 1;
 		totalSize += size;
 
@@ -86,6 +91,9 @@ public class CacheSizeStats implements Cloneable {
 		if (size > maxSize) {
 			maxSize = size;
 		}
+		
+		if(null != objectType)
+			cacheItemTypes.add(objectType);
 	}
 
 	/**
@@ -117,7 +125,7 @@ public class CacheSizeStats implements Cloneable {
 	 * @return max object size
 	 */
 	public long getMaxSize() {
-		return maxSize;
+		return (maxSize == Long.MIN_VALUE)?0:maxSize;
 	}
 
 	/**
@@ -125,7 +133,7 @@ public class CacheSizeStats implements Cloneable {
 	 * @return min object size
 	 */
 	public long getMinSize() {
-		return minSize;
+		return (minSize == Long.MAX_VALUE)?0:minSize;
 	}
 
 	/**
@@ -135,14 +143,25 @@ public class CacheSizeStats implements Cloneable {
 		return objCount;
 	}
 
+	public String getCacheItemTypes() {
+		StringBuilder sb = new StringBuilder();
+		for(String type : cacheItemTypes){
+			if(sb.length() > 0)
+				sb.append(",");
+			sb.append(type);
+		}
+		return sb.toString();
+	}
+	
 	@Override
 	public String toString() {
 		return String
-				.format("Cache: %s, Cached Objects=>[Total Count: %s, Avg Size: %s, Min Size: %s, Max Size: %s]",
+				.format("Cache: %s, Items Types: %s, Items Size Stats:[Sampled Count: %d, Avg Size: %s KB, Min Size: %s KB, Max Size: %s KB]",
 						getCacheName(),
-						nf.format(this.getObjCount()),
-						nf.format(this.getAvgSize()),
-						nf.format(this.getMinSize()),
-						nf.format(this.getMaxSize()));
+						getCacheItemTypes(),
+						getObjCount(),
+						nf.format(getAvgSize() / 1024),
+						nf.format(getMinSize() / 1024),
+						nf.format(getMaxSize() / 1024));
 	}
 }

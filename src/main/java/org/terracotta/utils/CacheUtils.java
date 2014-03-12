@@ -50,12 +50,12 @@ public class CacheUtils {
 			configLocationToLoad = "classpath:ehcache.xml";
 		}
 		
-		if(null != configLocationToLoad){
+		if(null != configLocationToLoad && !"".equals(configLocationToLoad.trim())){
 			InputStream inputStream = null;
 			try {
-				if(configLocationToLoad.indexOf("file:") > -1){
+				if(configLocationToLoad.indexOf("file:") > -1) {
 					inputStream = new FileInputStream(configLocationToLoad.substring("file:".length()));
-				}else if(configLocationToLoad.indexOf("classpath:") > -1){
+				} else if(configLocationToLoad.indexOf("classpath:") > -1) {
 					inputStream = CacheUtils.class.getClassLoader().getResourceAsStream(configLocationToLoad.substring("classpath:".length()));
 				} else { //default to classpath if no prefix is specified
 					inputStream = CacheUtils.class.getClassLoader().getResourceAsStream(configLocationToLoad);
