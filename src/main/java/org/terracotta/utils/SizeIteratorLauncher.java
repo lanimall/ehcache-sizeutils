@@ -22,12 +22,16 @@ import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
+import org.apache.commons.lang.SerializationUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class SizeIteratorLauncher {
 	private static Logger log = LoggerFactory.getLogger(SizeIteratorLauncher.class);
 	private static final boolean isDebug = log.isDebugEnabled();
+
+	private static final int KEYSTAT_INDEX = 0;
+	private static final int VALUESTAT_INDEX = 1;
 
 	private static final int DEFAULT_SAMPLEDSIZE = 1000;
 	private static final int DEFAULT_CACHEPOOLSIZE = 2;
@@ -37,6 +41,7 @@ public class SizeIteratorLauncher {
 	public static final String CONFIG_USETHREADING = "useThreading";
 	public static final String CONFIG_CACHEPOOLSIZE = "cachePoolSize";
 	public static final String CONFIG_CACHEGETSPOOLSIZE = "cacheGetsPoolSize";
+	public static final String CONFIG_SIZEOFTYPE = "sizeOfType";
 
 	private final boolean useThreading = System.getProperties().containsKey(CONFIG_USETHREADING);
 	private final boolean serializedSizeCalculation = System.getProperties().containsKey(CONFIG_CALCULATESERIALIZEDSIZE);
@@ -51,8 +56,25 @@ public class SizeIteratorLauncher {
 	private final ExecutorService cacheFetchService;
 	private final ExecutorService cacheGetService;
 
-	//private final SizeOf sizeOf = new net.sf.ehcache.pool.sizeof.AgentSizeOf(new PassThroughFilter(), true);
-	private final SizeOf sizeOf = new net.sf.ehcache.pool.sizeof.ReflectionSizeOf(new PassThroughFilter(), true);
+	//agent (DEFAULT), reflection, unsafe
+	private static final SizeOf sizeOf;
+	static {
+		String sizeOfType = System.getProperty(CONFIG_SIZEOFTYPE);
+		if(null == sizeOfType){
+			sizeOf = new net.sf.ehcache.pool.sizeof.AgentSizeOf(new PassThroughFilter(), true);
+		} else {
+			sizeOfType = sizeOfType.toLowerCase();
+			if("reflection".equals(sizeOfType)){
+				sizeOf = new net.sf.ehcache.pool.sizeof.ReflectionSizeOf(new PassThroughFilter(), true);
+			} else if ("agent".equals(sizeOfType)) {
+				sizeOf = new net.sf.ehcache.pool.sizeof.AgentSizeOf(new PassThroughFilter(), true);
+			} else if ("unsafe".equals(sizeOfType)) {
+				sizeOf = new net.sf.ehcache.pool.sizeof.UnsafeSizeOf(new PassThroughFilter(), true);
+			} else {
+				sizeOf = new net.sf.ehcache.pool.sizeof.AgentSizeOf(new PassThroughFilter(), true);
+			}
+		}
+	}
 
 	public SizeIteratorLauncher(final String cacheName) {
 		this(cacheName, -1);
@@ -108,31 +130,35 @@ public class SizeIteratorLauncher {
 	}
 
 	private void findThreadingObjectSizesInCache(){
-		Future<CacheSizeStats> futs[] = new Future[myCacheNames.length];
-		int count = 0;
+		Future<CacheSizeStats[]> futs[] = new Future[myCacheNames.length];
+		int cachecount = 0;
 		for(String cacheName : myCacheNames){
 			Cache myCache = cacheManager.getCache(cacheName);
-			futs[count++] = cacheFetchService.submit(new CacheFetchOp(myCache));
+			futs[cachecount++] = cacheFetchService.submit(new CacheFetchOp(myCache));
 		}
 
-		CacheSizeStats[] stats = new CacheSizeStats[count];
-		for(int i = 0; i < count; i++) {
+		for(int i = 0; i < cachecount; i++) {
 			try {
 				while(!futs[i].isDone()){
 					System.out.print(".");
 					Thread.sleep(5000);
 				}
-				stats[i] = futs[i].get();
+
+				CacheSizeStats[] stats = futs[i].get();
+				if(null != stats){
+					if(stats.length > KEYSTAT_INDEX && null != stats[KEYSTAT_INDEX]){
+						System.out.println("Keys Inspector--" + stats[KEYSTAT_INDEX].toString());
+					}
+
+					if(stats.length > VALUESTAT_INDEX && null != stats[VALUESTAT_INDEX]){
+						System.out.println("Values Inspector--" + stats[VALUESTAT_INDEX].toString());
+					}
+				}
 			} catch (InterruptedException e) {
 				log.error("", e);
 			} catch (ExecutionException e) {
 				log.error("", e);
 			}
-		}
-
-		System.out.println("");
-		for(CacheSizeStats stat : stats){
-			System.out.println(stat.toString());
 		}
 	}
 
@@ -164,7 +190,7 @@ public class SizeIteratorLauncher {
 		}
 	}
 
-	private class CacheFetchOp implements Callable<CacheSizeStats> {
+	private class CacheFetchOp implements Callable<CacheSizeStats[]> {
 		private final Cache myCache;
 
 		public CacheFetchOp(Cache myCache) {
@@ -172,8 +198,8 @@ public class SizeIteratorLauncher {
 		}
 
 		@Override
-		public CacheSizeStats call() throws Exception {
-			CacheSizeStats cacheStats = new CacheSizeStats(myCache.getName());
+		public CacheSizeStats[] call() throws Exception {
+			CacheSizeStats[] cacheStats = new CacheSizeStats[]{new CacheSizeStats(myCache.getName()), new CacheSizeStats(myCache.getName())};
 
 			List<Object> keys = myCache.getKeys();
 			int iterationLimit = 0;
@@ -192,9 +218,9 @@ public class SizeIteratorLauncher {
 	private class CacheGetOp implements Runnable {
 		private final Cache myCache;
 		private final Object key;
-		private final CacheSizeStats cacheStats;
+		private final CacheSizeStats[] cacheStats;
 
-		public CacheGetOp(Cache myCache, Object key, CacheSizeStats cacheStats) {
+		public CacheGetOp(Cache myCache, Object key, CacheSizeStats[] cacheStats) {
 			this.myCache = myCache;
 			this.cacheStats = cacheStats;
 			this.key = key;
@@ -203,11 +229,28 @@ public class SizeIteratorLauncher {
 		@Override
 		public void run() {
 			Element e = myCache.getQuiet(key);
-			if(e != null & e.getObjectValue() != null){
-				long size = (serializedSizeCalculation)?e.getSerializedSize():sizeOf.deepSizeOf(Integer.MAX_VALUE, true, e.getObjectValue()).getCalculated();
-				cacheStats.add(size, getObjectType(e.getObjectValue()));
-				if(isDebug)
-					log.debug("Cache=" + myCache.getName() + ":\t" + "Key = " + e.getObjectKey() + " size of element = " + size);
+			if(e != null){
+				if(e.getKey() != null){
+					//TODO
+					byte[] serialized = SerializationUtils.serialize(e.getKey());
+
+					long heapSize = sizeOf.deepSizeOf(Integer.MAX_VALUE, true, e.getKey()).getCalculated();
+
+					cacheStats[KEYSTAT_INDEX].add(heapSize, getObjectType(e.getKey()));
+					if(isDebug){
+						log.debug(String.format("Cache=%s:\t-Deserialized Size=%d,Serialized size=%d" + heapSize, myCache.getName(), heapSize, serialized.length));
+					}
+				}
+
+				if(e.getValue() != null){
+					//TODO
+					byte[] serialized = SerializationUtils.serialize(e.getValue());
+					long heapSize = sizeOf.deepSizeOf(Integer.MAX_VALUE, true, e.getValue()).getCalculated();
+
+					cacheStats[VALUESTAT_INDEX].add(heapSize, getObjectType(e.getValue()));
+					if(isDebug)
+						log.debug("Cache=" + myCache.getName() + ":\t" + "Size of value object = " + heapSize);
+				}
 			}
 		}
 	}
